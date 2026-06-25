@@ -1,0 +1,434 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+<meta name="theme-color" content="#0A0A0A" />
+<title>Simplified FBOED</title>
+<link rel="manifest" href="data:application/json;base64,eyJuYW1lIjoiU2ltcGxpZmllZCBGQk9FRCIsInNob3J0X25hbWUiOiJGQk9FRCIsInN0YXJ0X3VybCI6Ii4vIiwiZGlzcGxheSI6InN0YW5kYWxvbmUiLCJiYWNrZ3JvdW5kX2NvbG9yI[...]
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=EB+Garamond:ital,wght@0,400;0,500;0,600;0,700;1,400;1,500;1,600&display=swap');
+  * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+  html, body { margin: 0; padding: 0; background: #0A0A0A; }
+  body { font-family: 'EB Garamond', serif; }
+  ::-webkit-scrollbar { display: none; }
+  #root { min-height: 100vh; }
+  button { font-family: inherit; cursor: pointer; }
+</style>
+</head>
+<body>
+<div id="root"></div>
+
+<script src="https://unpkg.com/react@18/umd/react.production.min.js" crossorigin></script>
+<script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js" crossorigin></script>
+<script src="https://unpkg.com/@babel/standalone/babel.min.js" crossorigin></script>
+
+<script type="text/babel" data-presets="react">
+const { useState, useEffect, useRef } = React;
+
+// ---- inline icons (no external icon dependency) ----
+function Plus({ size = 16 }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
+      <line x1="12" y1="5" x2="12" y2="19" />
+      <line x1="5" y1="12" x2="19" y2="12" />
+    </svg>
+  );
+}
+function Flame({ size = 14 }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="currentColor" stroke="none">
+      <path d="M12 2c1 3-3 4-3 8a3 3 0 006 0c0-1-.5-2-1-2.5 1.5.5 3 2.5 3 5.5a5 5 0 11-10 0c0-4 2-6 3-7 0 0-.5 2 .5 2.5C11 7 11 4 12 2z" />
+    </svg>
+  );
+}
+
+const DAY_A = {
+  key: "A",
+  label: "Full Body A",
+  sub: "Push emphasis",
+  cardBg: "#161616",
+  exercises: [
+    { name: "Calf raise", sets: 3 },
+    { name: "Lateral raise", sets: 2 },
+    { name: "Hi bar squat / hack squat", sets: 2 },
+    { name: "Overhead press", sets: 2 },
+    { name: "Incline bench", sets: 3 },
+    { name: "Leg extension", sets: 2 },
+    { name: "Hip adduction", sets: 2 },
+    { name: "Skull crusher", sets: 3 },
+    { name: "Forearm curl", sets: 3 },
+    { name: "Band pull apart", sets: 3 },
+  ],
+};
+
+const DAY_B = {
+  key: "B",
+  label: "Full Body B",
+  sub: "Pull emphasis",
+  cardBg: "#181818",
+  exercises: [
+    { name: "Calf raise", sets: 3 },
+    { name: "Lateral raise", sets: 2 },
+    { name: "SLDL", sets: 2 },
+    { name: "Barbell row", sets: 2 },
+    { name: "Weighted pull up", sets: 2 },
+    { name: "Hamstring curl", sets: 2 },
+    { name: "Hip abduction", sets: 2 },
+    { name: "Bicep curl", sets: 3 },
+    { name: "Forearm curl", sets: 3 },
+    { name: "Band pull apart", sets: 3 },
+  ],
+};
+
+const DAYS = { A: DAY_A, B: DAY_B };
+const ACCENT = "#7A1F2B";
+const REP_TARGET = 8;
+
+function todayISO() {
+  return new Date().toISOString().slice(0, 10);
+}
+function fmtShort(iso) {
+  const d = new Date(iso + "T00:00:00");
+  return d.toLocaleDateString(undefined, { month: "short", day: "numeric" });
+}
+function exKey(dayKey, name) {
+  return `${dayKey}__${name}`;
+}
+
+// ---- storage helpers: localStorage (private to this browser/device) ----
+function storageGet(key) {
+  try {
+    const raw = window.localStorage.getItem(key);
+    return raw ? JSON.parse(raw) : null;
+  } catch {
+    return null;
+  }
+}
+function storageSet(key, value) {
+  try {
+    window.localStorage.setItem(key, JSON.stringify(value));
+  } catch {
+    // ignore (storage full or unavailable)
+  }
+}
+
+function Sparkline({ points }) {
+  if (!points || points.length < 2) {
+    return <div style={{ height: 22 }} />;
+  }
+  const w = 64;
+  const h = 22;
+  const max = Math.max(...points, 1);
+  const min = Math.min(...points, 0);
+  const range = max - min || 1;
+  const stepX = w / (points.length - 1);
+  const coords = points.map((p, i) => {
+    const x = i * stepX;
+    const y = h - ((p - min) / range) * (h - 4) - 2;
+    return [x, y];
+  });
+  const path = coords.map(([x, y], i) => `${i === 0 ? "M" : "L"}${x.toFixed(1)},${y.toFixed(1)}`).join(" ");
+  const last = coords[coords.length - 1];
+  return (
+    <svg width={w} height={h} viewBox={`0 0 ${w} ${h}`} style={{ display: "block" }}>
+      <path d={path} fill="none" stroke={ACCENT} strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" />
+      <circle cx={last[0]} cy={last[1]} r="2.2" fill={ACCENT} />
+    </svg>
+  );
+}
+
+function SetPill({ value, target, onChange }) {
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState(value || "");
+  const inputRef = useRef(null);
+
+  useEffect(() => { setDraft(value || ""); }, [value]);
+  useEffect(() => { if (editing && inputRef.current) inputRef.current.focus(); }, [editing]);
+
+  const repsNum = (() => {
+    const m = (value || "").match(/x\s*(\d+)/i);
+    return m ? parseInt(m[1], 10) : null;
+  })();
+  const isFull = repsNum !== null && repsNum >= target;
+
+  function commit() {
+    setEditing(false);
+    onChange(draft.trim());
+  }
+
+  if (editing) {
+    return (
+      <input
+        ref={inputRef}
+        value={draft}
+        onChange={(e) => setDraft(e.target.value)}
+        onBlur={commit}
+        onKeyDown={(e) => { if (e.key === "Enter") commit(); }}
+        placeholder="45x6"
+        inputMode="text"
+        style={{
+          width: 64, height: 40, background: "#0A0A0A",
+          border: `1.5px solid ${ACCENT}`, borderRadius: 10, color: "#FFFFFF",
+          fontFamily: "'EB Garamond', serif", fontSize: 15, textAlign: "center", outline: "none",
+        }}
+      />
+    );
+  }
+
+  return (
+    <button
+      onClick={() => setEditing(true)}
+      style={{
+        width: 64, height: 40, borderRadius: 10,
+        border: isFull ? `1.5px solid ${ACCENT}` : "1.5px solid #2C2C2C",
+        background: value ? (isFull ? "rgba(122,31,43,0.14)" : "#1D1D1D") : "#141414",
+        color: value ? "#FFFFFF" : "#5A5A5A",
+        fontFamily: "'EB Garamond', serif", fontSize: 15, fontWeight: value ? 600 : 400,
+        display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0,
+      }}
+    >
+      {value || "+"}
+    </button>
+  );
+}
+
+function ExerciseCard({ dayKey, ex, log, onSetChange, cardBg }) {
+  const setsArr = Array.from({ length: ex.sets }, (_, i) => log?.[i] || "");
+  const history = log?.history || [];
+  const allFull =
+    setsArr.every((s) => s) &&
+    setsArr.every((s) => {
+      const m = s.match(/x\s*(\d+)/i);
+      return m && parseInt(m[1], 10) >= REP_TARGET;
+    });
+
+  return (
+    <div
+      style={{
+        background: cardBg, borderRadius: 16, padding: "14px 14px 12px", marginBottom: 10,
+        border: allFull ? `1px solid ${ACCENT}40` : "1px solid #1F1F1F",
+      }}
+    >
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 10 }}>
+        <div style={{ paddingRight: 8 }}>
+          <div style={{ fontFamily: "'EB Garamond', serif", fontWeight: 600, fontStyle: "italic", fontSize: 19, color: "#FFFFFF", letterSpacing: "0.005em", lineHeight: 1.15 }}>
+            {ex.name}
+          </div>
+          <div style={{ fontFamily: "'EB Garamond', serif", fontSize: 13, color: "#9A9A9A", marginTop: 3, letterSpacing: "0.01em" }}>
+            {ex.sets} sets · 4–{REP_TARGET} reps
+          </div>
+        </div>
+        <Sparkline points={history} />
+      </div>
+      <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+        {setsArr.map((val, i) => (
+          <SetPill key={i} value={val} target={REP_TARGET} onChange={(v) => onSetChange(i, v)} />
+        ))}
+        {allFull && (
+          <div style={{ display: "flex", alignItems: "center", gap: 4, marginLeft: 2, color: ACCENT, fontFamily: "'EB Garamond', serif", fontSize: 14, fontStyle: "italic", fontWeight: 600 }}>
+            <Flame size={13} /> add weight
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function FBOEDApp() {
+  const [loaded, setLoaded] = useState(false);
+  const [sessions, setSessions] = useState([]);
+  const [logs, setLogs] = useState({});
+  const [activeSessionId, setActiveSessionId] = useState(null);
+  const [exHistory, setExHistory] = useState({});
+  const stripRef = useRef(null);
+
+  useEffect(() => {
+    let sess = storageGet("fboed:sessions") || [];
+    let lg = storageGet("fboed:logs") || {};
+
+    if (sess.length === 0) {
+      const id = `${todayISO()}_A`;
+      sess = [{ id, date: todayISO(), dayKey: "A" }];
+      lg = { [id]: {} };
+      storageSet("fboed:sessions", sess);
+      storageSet("fboed:logs", lg);
+    }
+    setSessions(sess);
+    setLogs(lg);
+    setActiveSessionId(sess[sess.length - 1].id);
+    setLoaded(true);
+  }, []);
+
+  useEffect(() => {
+    if (!loaded) return;
+    const hist = {};
+    sessions.forEach((s) => {
+      const dayDef = DAYS[s.dayKey];
+      dayDef.exercises.forEach((ex) => {
+        const k = exKey(s.dayKey, ex.name);
+        const entry = logs[s.id]?.[k];
+        if (!entry) return;
+        const weights = Object.keys(entry)
+          .filter((kk) => kk !== "history")
+          .map((kk) => entry[kk])
+          .filter(Boolean)
+          .map((v) => {
+            const m = v.match(/^(\d+(?:\.\d+)?)/);
+            return m ? parseFloat(m[1]) : null;
+          })
+          .filter((v) => v !== null);
+        if (weights.length) {
+          const top = Math.max(...weights);
+          if (!hist[k]) hist[k] = [];
+          hist[k].push(top);
+        }
+      });
+    });
+    setExHistory(hist);
+  }, [sessions, logs, loaded]);
+
+  useEffect(() => {
+    if (stripRef.current) stripRef.current.scrollLeft = stripRef.current.scrollWidth;
+  }, [sessions.length]);
+
+  const activeSession = sessions.find((s) => s.id === activeSessionId);
+
+  function persistLogs(next) {
+    setLogs(next);
+    storageSet("fboed:logs", next);
+  }
+  function persistSessions(next) {
+    setSessions(next);
+    storageSet("fboed:sessions", next);
+  }
+
+  function handleSetChange(dayKey, exName, setIdx, value) {
+    if (!activeSession) return;
+    const k = exKey(dayKey, exName);
+    const next = { ...logs };
+    const sessLog = { ...(next[activeSession.id] || {}) };
+    const exLog = { ...(sessLog[k] || {}) };
+    exLog[setIdx] = value;
+    sessLog[k] = exLog;
+    next[activeSession.id] = sessLog;
+    persistLogs(next);
+  }
+
+  function addSession(dayKey) {
+    const id = `${todayISO()}_${dayKey}_${Date.now()}`;
+    const newSess = [...sessions, { id, date: todayISO(), dayKey }];
+    const newLogs = { ...logs, [id]: {} };
+    persistSessions(newSess);
+    persistLogs(newLogs);
+    setActiveSessionId(id);
+  }
+
+  function nextSuggestedDay() {
+    if (sessions.length === 0) return "A";
+    const last = sessions[sessions.length - 1];
+    return last.dayKey === "A" ? "B" : "A";
+  }
+
+  if (!loaded) {
+    return (
+      <div style={{ background: "#0A0A0A", height: "100%", minHeight: 500, display: "flex", alignItems: "center", justifyContent: "center" }}>
+        <div style={{ color: "#5A5A5A", fontFamily: "'EB Garamond', serif", fontSize: 13 }}>loading…</div>
+      </div>
+    );
+  }
+
+  const dayDef = activeSession ? DAYS[activeSession.dayKey] : DAY_A;
+  const sessionLog = activeSession ? logs[activeSession.id] || {} : {};
+
+  return (
+    <div style={{ background: "#0A0A0A", minHeight: "100vh", maxWidth: 480, margin: "0 auto", fontFamily: "'EB Garamond', serif", paddingBottom: 40 }}>
+      <div style={{ padding: "22px 18px 14px" }}>
+        <div style={{ fontFamily: "'EB Garamond', serif", fontStyle: "italic", fontWeight: 600, fontSize: 34, color: "#FFFFFF", letterSpacing: "-0.01em", lineHeight: 1 }}>
+          Simplified FBOED
+        </div>
+        <div style={{ width: 46, height: 2, background: ACCENT, margin: "10px 0 10px" }} />
+        <div style={{ fontFamily: "'EB Garamond', serif", fontStyle: "italic", fontSize: 13.5, color: "#9A9A9A", letterSpacing: "0.01em" }}>
+          Four to eight reps across all sets, then add weight
+        </div>
+      </div>
+
+      <div ref={stripRef} style={{ display: "flex", gap: 8, overflowX: "auto", padding: "4px 16px 14px", scrollSnapType: "x proximity" }}>
+        {sessions.map((s) => {
+          const isActive = s.id === activeSessionId;
+          const d = DAYS[s.dayKey];
+          return (
+            <button
+              key={s.id}
+              onClick={() => setActiveSessionId(s.id)}
+              style={{
+                flexShrink: 0, scrollSnapAlign: "center", minWidth: 64, padding: "8px 10px", borderRadius: 12,
+                border: isActive ? `1.5px solid ${ACCENT}` : "1.5px solid #1F1F1F",
+                background: isActive ? "rgba(122,31,43,0.13)" : "#121212",
+                display: "flex", flexDirection: "column", alignItems: "center", gap: 2,
+              }}
+            >
+              <span style={{ fontFamily: "'EB Garamond', serif", fontSize: 12, fontStyle: "italic", color: isActive ? ACCENT : "#8A8A8A", fontWeight: 600 }}>
+                {fmtShort(s.date)}
+              </span>
+              <span style={{ fontFamily: "'EB Garamond', serif", fontSize: 16, fontWeight: 600, color: isActive ? "#FFFFFF" : "#9A9A9A" }}>
+                {d.key}
+              </span>
+            </button>
+          );
+        })}
+        <button
+          onClick={() => addSession(nextSuggestedDay())}
+          style={{
+            flexShrink: 0, minWidth: 64, borderRadius: 12, border: "1.5px dashed #2C2C2C", background: "transparent",
+            display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 2, color: "#5A5A5A",
+          }}
+        >
+          <Plus size={16} />
+          <span style={{ fontFamily: "'EB Garamond', serif", fontSize: 11, fontStyle: "italic" }}>
+            day {nextSuggestedDay()}
+          </span>
+        </button>
+      </div>
+
+      <div style={{ padding: "0 16px 14px" }}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "10px 14px", borderRadius: 14, background: dayDef.key === "A" ? "#1B1B1B" : "#171717", border: `1px solid ${dayDef.key === "A" ? "#2A2A2A" : "#262626"}` }}>
+          <div>
+            <div style={{ fontFamily: "'EB Garamond', serif", fontStyle: "italic", fontWeight: 600, fontSize: 19, color: "#FFFFFF" }}>
+              {dayDef.label}
+            </div>
+            <div style={{ fontFamily: "'EB Garamond', serif", fontSize: 12.5, color: "#9A9A9A" }}>
+              {dayDef.sub}
+            </div>
+          </div>
+          <div style={{ width: 32, height: 32, borderRadius: 999, background: dayDef.key === "A" ? "#FFFFFF" : ACCENT, color: dayDef.key === "A" ? "#0A0A0A" : "#FFFFFF", display: "flex", alignItems: "center", justifyContent: "center", fontFamily: "'EB Garamond', serif", fontWeight: 700, fontSize: 14 }}>
+            {dayDef.key}
+          </div>
+        </div>
+      </div>
+
+      <div style={{ padding: "0 16px" }}>
+        {dayDef.exercises.map((ex) => {
+          const k = exKey(dayDef.key, ex.name);
+          const log = { ...(sessionLog[k] || {}), history: exHistory[k] || [] };
+          return (
+            <ExerciseCard
+              key={ex.name}
+              dayKey={dayDef.key}
+              ex={ex}
+              log={log}
+              cardBg={dayDef.cardBg}
+              onSetChange={(idx, val) => handleSetChange(dayDef.key, ex.name, idx, val)}
+            />
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+const root = ReactDOM.createRoot(document.getElementById("root"));
+root.render(<FBOEDApp />);
+</script>
+</body>
+</html>
